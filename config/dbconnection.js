@@ -1,0 +1,17 @@
+DB_PASSWORD='Realforce@123'
+const{DB_HOST,DB_USERNAME,DB_NAME }=process.env;
+
+var mysql = require('mysql2');
+ var conn = mysql.createConnection({
+    host:DB_HOST,
+    user:DB_USERNAME,
+    password:DB_PASSWORD,
+    database:DB_NAME,
+    dateStrings: true
+ });
+ conn.connect( function(err){
+    if(err) throw err;
+    console.log(DB_NAME+' Database Connected db connection1');
+
+ });
+ module.exports = conn;
