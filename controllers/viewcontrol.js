@@ -505,11 +505,21 @@ const newfetchData = (req, res, tableArg, orderbyArg, whereArg) => {
   let table = tableArg || req.params.tblname || req.body.tablename || req.query.tablename || 'users';
   let orderby = orderbyArg || req.params.orderby || req.body.orderby || req.query.orderby || '';
   let where = whereArg || req.body.where || req.query.where || null;
+  
+  // If no where provided from arguments, check URL parameters
+  if (!where && req.params.where) {
+    where = decodeURIComponent(req.params.where);
+  }
+  // Fallback to wildcard parameter if using /* route
+  if (!where && req.params[0]) {
+    where = decodeURIComponent(req.params[0]);
+  }
 
   // Debug: log incoming parameters
   console.log('[newfetchData] table:', table);
   console.log('[newfetchData] orderby:', orderby);
   console.log('[newfetchData] where:', where);
+  console.log('[newfetchData] req.params:', req.params);
 
   // Build WHERE clause and values
   let whereClause = '';
@@ -519,7 +529,15 @@ const newfetchData = (req, res, tableArg, orderbyArg, whereArg) => {
     whereClause = `WHERE ${conditions}`;
     whereValues = Object.values(where);
   } else if (where && typeof where === 'string') {
-    whereClause = `WHERE ${where}`;
+    // Handle URL-encoded where clauses like fetchData does
+    const params = new URLSearchParams(where);
+    const conditions = [];
+    for (const [key, value] of params.entries()) {
+      conditions.push(`${key}="${value}"`);
+    }
+    if (conditions.length > 0) {
+      whereClause = `WHERE ${conditions.join(' AND ')}`;
+    }
   }
 
   // Build SQL

@@ -46,7 +46,7 @@ router.post('/addnewproduct/:tablename', upload.array('images', 5), auth.isAutho
 
 router.get('/checkline',auth.isAuthorize,viewcontroller.checklLineDiscount);
 
-//router.get('/fetchdata/:tblname/:orderby/*',auth.isAuthorize,viewcontroller.fetchData);
+router.get('/fetchdata/:tblname/:orderby/*',auth.isAuthorize,viewcontroller.fetchData);
 router.get('/fetchdatanotequal/:tblname/:orderby/*',auth.isAuthorize,viewcontroller.fetchDatanotequal);
 router.get('/viewalldata/:tablename/:orderby',auth.isAuthorize,viewcontroller.viewAllData);
 router.get('/combolist/:tablename/:groupby',auth.isAuthorize,viewcontroller.combolist);

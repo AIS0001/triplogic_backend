@@ -6,23 +6,25 @@ const viewcontroller = require("../controllers/viewcontrol");
 const updatecontroller = require("../controllers/updatecontrol");
 const deletecontroller = require("../controllers/deletecontrol");
 const apicontroller = require("../controllers/apiController");
-router.use((req, res, next) => {
-  console.log('>>> travelAgentRoutes.js accessed:', req.method, req.originalUrl);
-  next();
-});
+
 // Generic data operations matching frontend API patterns
 
 // Generic insert route - matches insertData function
 router.post('/insertdata/:tablename', auth.isAuthorize, insertcontroller.insertdata);
 
-// Generic fetch route - matches fetchData function
-router.get('/newfetchdata/:tblname/:orderby?/*?', auth.isAuthorize, viewcontroller.newfetchData);
+
+
+// Generic fetch routes - matches fetchData function
+// Most specific routes first - order matters for Express routing
+router.get('/newfetchdata/:tblname/:orderby/:where', auth.isAuthorize, viewcontroller.newfetchData);
+router.get('/newfetchdata/:tblname/:orderby', auth.isAuthorize, viewcontroller.newfetchData);
+router.get('/newfetchdata/:tblname', auth.isAuthorize, viewcontroller.newfetchData);
 
 // Generic update route - matches updateData function
-router.put('/updatedata/:tablename', auth.isAuthorize, updatecontroller.updatedata);
+router.put('/updatedata/:tablename/:col1/:val1', auth.isAuthorize, apicontroller.updateData);
 
 // Generic delete route - matches deleteData function
-router.delete('/deletedata/:tablename', auth.isAuthorize, deletecontroller.deletedatabyid);
+router.delete('/deletebyid/:tablename/:colname/:colval', auth.isAuthorize, apicontroller.deleteData);
 
 // Users API routes
 router.get('/users', auth.isAuthorize, async (req, res) => {
