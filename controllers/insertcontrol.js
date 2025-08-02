@@ -14,47 +14,44 @@ const insertdata = (req, res) => {
 
   // Validate request body
   if (!req.body || Object.keys(req.body).length === 0) {
-    return res.status(400).send({
+    return res.status(400).json({
+      success: false,
       msg: 'Request body is empty. Please provide data to insert.',
       error: 'EMPTY_BODY'
     });
   }
 
-  const table = [req.params.tablename]
-  const val3 = req.body
-  const val = Object.values(val3)
-  const keyval = Object.keys(val3)
-  const val2 = val.length ? "'" + val.join("', '") + "'" : ''
-
-
-  let setty = `INSERT INTO ${table} (${keyval}) values (${val2})`
+  const table = req.params.tablename;
+  const columns = Object.keys(req.body);
+  const values = Object.values(req.body);
+  const placeholders = columns.map(() => '?').join(', ');
+  
+  let setty = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
   console.log('Generated SQL:', setty);
+  console.log('Values:', values);
 
-  db.query(
-    `INSERT INTO ${table} (${keyval}) values (${val2})`,
-    (err, result) => {
-      if (err) {
-        console.error('Database error:', err);
-        return res.status(400).send({
-          msg: err.message || err,
-          error: 'DATABASE_ERROR',
-          sql: setty
-        })
-      }
-      else{
-         // Retrieve the last inserted ID correctly
-    const insertedId = result.insertId; // Use result.insertId to get the inserted record's ID
-//console.log(insertedId);
-        return res.status(200).send({
-            msg: 'Data saved successfully',
-            id: insertedId,  // Return the newly inserted ID or any relevant data
-          })
-
-      }
-     
+  db.query(setty, values, (err, result) => {
+    if (err) {
+      console.error('Database error:', err);
+      return res.status(400).json({
+        success: false,
+        msg: err.message || err,
+        error: 'DATABASE_ERROR',
+        sql: setty
+      });
+    } else {
+      // Retrieve the last inserted ID correctly
+      const insertedId = result.insertId; // Use result.insertId to get the inserted record's ID
+      console.log('Data inserted with ID:', insertedId);
+      
+      return res.status(200).json({
+        success: true,
+        msg: 'Data saved successfully',
+        id: insertedId,  // Return the newly inserted ID or any relevant data
+      });
     }
-  )
-}
+  });
+};
 const savebill = async (req, res) => {
   // Get DB connection
   const connection = await db.getConnection(); // Get DB connection
@@ -288,8 +285,231 @@ const uploadcsv = (req, res) => {
 
 // Function to fetch and increment the alphanumeric code
 
+const insertdatawithimages = (req, res) => {
+  console.log('=== INSERT DATA WITH IMAGES DEBUG ===');
+  console.log('Table name:', req.params.tablename);
+  console.log('Request body:', req.body);
+  console.log('Files:', req.files);
 
+  // Validate request body
+  if (!req.body || Object.keys(req.body).length === 0) {
+    return res.status(400).json({
+      success: false,
+      msg: 'Request body is empty. Please provide data to insert.',
+      error: 'EMPTY_BODY'
+    });
+  }
 
+  const table = req.params.tablename;
+  
+  // Handle special case for activities with categories
+  if (table === 'activities' || table === 'cms_activities') {
+    return insertActivityWithCategories(req, res);
+  }
+  
+  // Regular insert for other tables
+  const columns = Object.keys(req.body);
+  const values = Object.values(req.body);
+  const placeholders = columns.map(() => '?').join(', ');
+  
+  let setty = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+  console.log('Generated SQL:', setty);
+  console.log('Values:', values);
+
+  // Insert data first
+  db.query(setty, values, (err, result) => {
+    if (err) {
+      console.error('Database error:', err);
+      return res.status(400).json({
+        success: false,
+        msg: err.message || err,
+        error: 'DATABASE_ERROR',
+        sql: setty
+      });
+    }
+
+    const insertedId = result.insertId;
+    console.log('Data inserted with ID:', insertedId);
+
+    // Handle image uploads if files are present
+    if (req.files && req.files.length > 0) {
+      console.log('Processing uploaded files...');
+      
+      const uploadedFiles = req.files.map(file => ({
+        originalName: file.originalname,
+        fileName: file.filename,
+        filePath: file.path,
+        size: file.size,
+        mimetype: file.mimetype
+      }));
+
+      console.log('Uploaded files info:', uploadedFiles);
+
+      return res.status(200).json({
+        success: true,
+        msg: 'Data and images saved successfully',
+        id: insertedId,
+        uploadedFiles: uploadedFiles
+      });
+    } else {
+      // No files to upload, just return success for data insertion
+      return res.status(200).json({
+        success: true,
+        msg: 'Data saved successfully (no images provided)',
+        id: insertedId
+      });
+    }
+  });
+};
+
+// Special function to handle activity insertion with categories
+const insertActivityWithCategories = (req, res) => {
+  console.log('=== INSERT ACTIVITY WITH CATEGORIES ===');
+  
+  const table = req.params.tablename; // Get the actual table name from params
+  const { categories, image_metadata, ...activityData } = req.body;
+  let categoryIds = [];
+  let imageMetadata = [];
+  
+  // Parse categories if it's a JSON string
+  try {
+    if (typeof categories === 'string') {
+      categoryIds = JSON.parse(categories);
+    } else if (Array.isArray(categories)) {
+      categoryIds = categories;
+    }
+  } catch (error) {
+    console.error('Error parsing categories:', error);
+    return res.status(400).json({
+      success: false,
+      msg: 'Invalid categories format',
+      error: 'INVALID_CATEGORIES'
+    });
+  }
+
+  // Parse image metadata if provided
+  try {
+    if (typeof image_metadata === 'string') {
+      imageMetadata = JSON.parse(image_metadata);
+    } else if (Array.isArray(image_metadata)) {
+      imageMetadata = image_metadata;
+    }
+  } catch (error) {
+    console.error('Error parsing image metadata:', error);
+    imageMetadata = [];
+  }
+
+  // Process uploaded images and combine with metadata
+  let imagesData = [];
+  if (req.files && req.files.length > 0) {
+    imagesData = req.files.map((file, index) => ({
+      filename: file.filename,
+      originalName: file.originalname,
+      filePath: file.path,
+      title: imageMetadata[index]?.title || '',
+      alt: imageMetadata[index]?.alt || activityData.name || '',
+      size: file.size,
+      mimetype: file.mimetype
+    }));
+  }
+
+  // Add the images JSON to activityData
+  if (imagesData.length > 0) {
+    activityData.images = JSON.stringify(imagesData); // Convert to JSON string for MySQL
+  }
+
+  // Handle other JSON fields that need stringification
+  if (activityData.highlight_details && typeof activityData.highlight_details === 'string') {
+    // Already a string, leave as is
+  } else if (activityData.highlight_details) {
+    activityData.highlight_details = JSON.stringify(activityData.highlight_details);
+  }
+
+  if (activityData.packages && typeof activityData.packages === 'string') {
+    // Already a string, leave as is
+  } else if (activityData.packages) {
+    activityData.packages = JSON.stringify(activityData.packages);
+  }
+
+  // Prepare for parameterized query
+  const columns = Object.keys(activityData);
+  const values = Object.values(activityData);
+  const placeholders = columns.map(() => '?').join(', ');
+  
+  let activitySql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+  console.log('Activity SQL:', activitySql);
+  console.log('Columns:', columns);
+  console.log('Values:', values);
+  console.log('Number of columns:', columns.length);
+  console.log('Number of values:', values.length);
+
+  // Insert activity using parameterized query
+  db.query(activitySql, values, (err, result) => {
+    if (err) {
+      console.error('Database error:', err);
+      return res.status(400).json({
+        success: false,
+        msg: err.message || err,
+        error: 'DATABASE_ERROR',
+        sql: activitySql
+      });
+    }
+
+    const activityId = result.insertId;
+    console.log('Activity inserted with ID:', activityId);
+
+    // Insert category associations if categories are provided
+    if (categoryIds && categoryIds.length > 0) {
+      const categoryValues = categoryIds.map(catId => `(${activityId}, ${catId})`).join(', ');
+      const categorySql = `INSERT INTO activity_categories (activity_id, category_id) VALUES ${categoryValues}`;
+      console.log('Categories SQL:', categorySql);
+      
+      db.query(categorySql, (catErr, catResult) => {
+        if (catErr) {
+          console.error('Category insertion error:', catErr);
+          // Don't fail the whole operation, just log the error
+          console.log('Activity created but categories not associated');
+        } else {
+          console.log('Categories associated successfully');
+        }
+        
+        handleFileUploads(req, res, activityId);
+      });
+    } else {
+      handleFileUploads(req, res, activityId);
+    }
+  });
+};
+
+// Helper function to handle file uploads
+const handleFileUploads = (req, res, activityId) => {
+  if (req.files && req.files.length > 0) {
+    console.log('Processing uploaded files...');
+    
+    const uploadedFiles = req.files.map(file => ({
+      originalName: file.originalname,
+      fileName: file.filename,
+      filePath: file.path,
+      size: file.size,
+      mimetype: file.mimetype
+    }));
+
+    console.log('Uploaded files info:', uploadedFiles);
+
+    return res.status(200).json({
+      success: true,
+      msg: 'Activity and images saved successfully',
+      id: activityId,
+      uploadedFiles: uploadedFiles
+    });
+  } else {
+    return res.status(200).json({
+      success: true,
+      msg: 'Activity saved successfully (no images provided)',
+      id: activityId
+    });
+  }
+};
 
 module.exports = {
   
@@ -299,4 +519,5 @@ module.exports = {
   insertdatabulkgst,
   addNewProduct,
   uploadcsv,
+  insertdatawithimages,
 }

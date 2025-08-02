@@ -6,16 +6,122 @@ const viewcontroller = require("../controllers/viewcontrol");
 const updatecontroller = require("../controllers/updatecontrol");
 const deletecontroller = require("../controllers/deletecontrol");
 const apicontroller = require("../controllers/apiController");
+const path = require('path');
+const multer = require('multer');
 
+
+//const { jwt_secret } = process.env;
+// Configure Multer storage
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadPath = path.join(__dirname, '../uploads');
+    // Create uploads directory if it doesn't exist
+    if (!require('fs').existsSync(uploadPath)) {
+      require('fs').mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: function (req, file, cb) {
+    const uniqueName = file.fieldname + '-' + Date.now() + path.extname(file.originalname);
+    console.log('Generated filename:', uniqueName);
+    cb(null, uniqueName);
+  },
+});
+
+// Add file filter and limits
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+    files: 10 // Max 10 files
+  },
+  fileFilter: function (req, file, cb) {
+    console.log('File upload attempt:', file.originalname, file.mimetype);
+    // Accept images only
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'), false);
+    }
+  }
+});
+
+// Add multer error handling middleware
+const handleMulterError = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    console.error('Multer error:', err);
+    return res.status(400).json({
+      success: false,
+      msg: 'File upload error: ' + err.message,
+      error: 'MULTER_ERROR'
+    });
+  } else if (err) {
+    console.error('Upload error:', err);
+    return res.status(400).json({
+      success: false,
+      msg: err.message,
+      error: 'UPLOAD_ERROR'
+    });
+  }
+  next();
+};
 // Generic data operations matching frontend API patterns
+
+// Test route for debugging
+router.post('/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'API is working',
+    body: req.body,
+    headers: req.headers
+  });
+});
 
 // Generic insert route - matches insertData function
 router.post('/insertdata/:tablename', auth.isAuthorize, insertcontroller.insertdata);
+router.post('/insertdatawithimages/:tablename', upload.array('images', 10), handleMulterError, auth.isAuthorize, insertcontroller.insertdatawithimages);
 
+// Activities specific routes for debugging
+router.get('/activities', auth.isAuthorize, async (req, res) => {
+  try {
+    const { category, location } = req.query;
+    let whereClause = '';
+    
+    if (category && location) {
+      whereClause = `category = '${category}' AND location = '${location}'`;
+    } else if (category) {
+      whereClause = `category = '${category}'`;
+    } else if (location) {
+      whereClause = `location = '${location}'`;
+    }
+    
+    req.params.tablename = 'activities';
+    req.params.orderby = 'created_at DESC';
+    if (whereClause) {
+      req.params['0'] = whereClause;
+    }
+    
+    viewcontroller.fetchData(req, res);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/activities', auth.isAuthorize, async (req, res) => {
+  req.params.tablename = 'activities';
+  insertcontroller.insertdata(req, res);
+});
+
+router.post('/activities/with-images', upload.array('images', 10), handleMulterError, auth.isAuthorize, async (req, res) => {
+  req.params.tablename = 'activities';
+  insertcontroller.insertdatawithimages(req, res);
+});
 
 
 // Generic fetch routes - matches fetchData function
 // Most specific routes first - order matters for Express routing
+router.get('/fetchdata/:tblname/:orderby/*', auth.isAuthorize, viewcontroller.fetchData);
+router.get('/fetchdatanotequal/:tblname/:orderby/*', auth.isAuthorize, viewcontroller.fetchDatanotequal);
 router.get('/newfetchdata/:tblname/:orderby/:where', auth.isAuthorize, viewcontroller.newfetchData);
 router.get('/newfetchdata/:tblname/:orderby', auth.isAuthorize, viewcontroller.newfetchData);
 router.get('/newfetchdata/:tblname', auth.isAuthorize, viewcontroller.newfetchData);

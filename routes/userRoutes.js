@@ -34,6 +34,7 @@ router.post('/upload_csv',auth.isAuthorize,insertcontroller.uploadcsv);
 
 //Insert Data 
 router.post('/insertdata/:tablename',auth.isAuthorize,insertcontroller.insertdata);
+router.post('/insertdatawithimages/:tablename', upload.array('images', 10), auth.isAuthorize, insertcontroller.insertdatawithimages);
 router.post('/savepayment',auth.isAuthorize,billcontroller.savePayment);
 router.post('/saveSupplierPayment',auth.isAuthorize,billcontroller.saveSupplierPayment);
 router.post('/savebill',auth.isAuthorize,savebillController.savebill);
