@@ -24,6 +24,7 @@ const userRouters = require('./routes/userRoutes.js');
 const travelAgentRouters = require('./routes/travelAgentRoutes.js');
 const dashboardRouters = require('./routes/dashboardRoutes.js');
 const printRouters = require('./routes/printRoutes.js');
+const publicRouters = require('./routes/publicRoutes.js');
 // Use Print Routes
 
 
@@ -41,6 +42,7 @@ app.use('/api', userRouters);
 app.use('/api', travelAgentRouters);
 app.use('/api', printRouters);
 app.use('/api', dashboardRouters);
+app.use('/public', publicRouters);  // Public API - no authentication required
 
 //error handling
 app.use((err, req, res, next) => {

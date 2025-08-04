@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review Submission Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, textarea, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        textarea { height: 100px; resize: vertical; }
+        .file-input { border: 2px dashed #ddd; padding: 20px; text-align: center; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .result { margin-top: 20px; padding: 10px; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .preview { margin-top: 10px; }
+        .preview img { width: 100px; height: 100px; object-fit: cover; margin: 5px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Submit Review with Images</h1>
+    
+    <form id="reviewForm" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="customer_name">Your Name *</label>
+            <input type="text" id="customer_name" name="customer_name" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="customer_email">Your Email</label>
+            <input type="email" id="customer_email" name="customer_email">
+        </div>
+        
+        <div class="form-group">
+            <label for="customer_phone">Your Phone</label>
+            <input type="tel" id="customer_phone" name="customer_phone">
+        </div>
+        
+        <div class="form-group">
+            <label for="activity_id">Activity ID *</label>
+            <input type="number" id="activity_id" name="activity_id" required placeholder="Enter the activity ID">
+        </div>
+        
+        <div class="form-group">
+            <label for="activity_name">Activity Name *</label>
+            <input type="text" id="activity_name" name="activity_name" required placeholder="Enter the activity name">
+        </div>
+        
+        <div class="form-group">
+            <label for="rating">Rating *</label>
+            <select id="rating" name="rating" required>
+                <option value="">Select Rating</option>
+                <option value="5">5 Stars - Excellent</option>
+                <option value="4">4 Stars - Very Good</option>
+                <option value="3">3 Stars - Good</option>
+                <option value="2">2 Stars - Fair</option>
+                <option value="1">1 Star - Poor</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="review_details">Your Review *</label>
+            <textarea id="review_details" name="review_details" required placeholder="Share your experience with this activity..."></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label for="review_date">Activity Date</label>
+            <input type="date" id="review_date" name="review_date" placeholder="When did you experience this activity?">
+        </div>
+        
+        <div class="form-group">
+            <label for="images">Upload Images (Optional - Max 5 images, 5MB each)</label>
+            <div class="file-input">
+                <input type="file" id="images" name="images" multiple accept="image/*" onchange="previewImages()">
+                <p>Click to select images or drag and drop here</p>
+            </div>
+            <div id="imagePreview" class="preview"></div>
+        </div>
+        
+        <button type="submit">Submit Review</button>
+    </form>
+    
+    <div id="result"></div>
+
+    <script>
+        // API endpoint - change this to your server URL
+        const API_BASE_URL = 'http://localhost:3000'; // Change this to your actual server URL
+        
+        function previewImages() {
+            const input = document.getElementById('images');
+            const preview = document.getElementById('imagePreview');
+            preview.innerHTML = '';
+            
+            for (let i = 0; i < input.files.length; i++) {
+                const file = input.files[i];
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    preview.appendChild(img);
+                };
+                
+                reader.readAsDataURL(file);
+            }
+        }
+        
+        document.getElementById('reviewForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const resultDiv = document.getElementById('result');
+            
+            // Show loading
+            resultDiv.innerHTML = '<div style="padding: 10px; background: #e3f2fd;">Submitting review...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/public/reviews/submit`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <strong>Success!</strong><br>
+                            ${data.message}<br>
+                            Review ID: ${data.data.review_id}<br>
+                            Activity: ${data.data.activity_name} (ID: ${data.data.activity_id})<br>
+                            Customer: ${data.data.customer_name}<br>
+                            Rating: ${data.data.rating} stars<br>
+                            Images uploaded: ${data.data.images_uploaded}
+                        </div>
+                    `;
+                    this.reset();
+                    document.getElementById('imagePreview').innerHTML = '';
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <strong>Error:</strong> ${data.message}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>Error:</strong> Failed to submit review. Please check your connection and try again.
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>

@@ -238,6 +238,110 @@ const updatedata = (req, res) => {
   });
 };
 
+const updatedatawithimages = (req, res) => {
+  console.log('=== UPDATE DATA WITH IMAGES DEBUG ===');
+  console.log('Table name:', req.params.tablename);
+  console.log('WHERE column:', req.params.col1);
+  console.log('WHERE value:', req.params.val1);
+  console.log('Request body:', req.body);
+  console.log('Files:', req.files);
+
+  const table = req.params.tablename;
+  const col1 = req.params.col1;  // WHERE column from URL
+  const val1 = req.params.val1;  // WHERE value from URL
+  const { updatedFields, where } = req.body;
+
+  // Validate inputs
+  if (!table || !col1 || !val1) {
+    return res.status(400).json({
+      success: false,
+      message: 'Table name, column, and value are required in URL parameters.'
+    });
+  }
+
+  if (!updatedFields || Object.keys(updatedFields).length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'updatedFields is required and cannot be empty.'
+    });
+  }
+
+  // Build WHERE clause (use URL parameters)
+  const whereClause = `${col1} = ?`;
+  const whereValues = [val1];
+
+  console.log('WHERE clause:', whereClause);
+  console.log('WHERE values:', whereValues);
+
+  // Handle image uploads if files are present
+  if (req.files && req.files.length > 0) {
+    console.log('Processing uploaded files...');
+    
+    const uploadedFiles = req.files.map(file => ({
+      originalName: file.originalname,
+      fileName: file.filename,
+      filePath: file.path,
+      size: file.size,
+      mimetype: file.mimetype
+    }));
+
+    console.log('Uploaded files info:', uploadedFiles);
+
+    // Add image file names to updatedFields if there's an images column
+    const imageFileNames = req.files.map(file => file.filename);
+    if (req.files.length > 0) {
+      // You can customize this based on your database schema
+      // Option 1: Store as comma-separated string
+      updatedFields.images = imageFileNames.join(',');
+      // Option 2: Store as JSON string
+      // updatedFields.images = JSON.stringify(imageFileNames);
+    }
+  }
+
+  // Construct the final SQL query
+  const updateQuery = `UPDATE ?? SET ? WHERE ${whereClause}`;
+
+  console.log('Final update query:', updateQuery);
+  console.log('Updated fields:', updatedFields);
+
+  db.query(updateQuery, [table, updatedFields, ...whereValues], (error, result) => {
+    if (error) {
+      console.error("Error updating data:", error);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Error updating data', 
+        error: error.message 
+      });
+    }
+
+    if (result.affectedRows > 0) {
+      const responseData = {
+        success: true,
+        message: 'Data updated successfully',
+        affectedRows: result.affectedRows
+      };
+
+      // Include uploaded file info in response
+      if (req.files && req.files.length > 0) {
+        responseData.uploadedFiles = req.files.map(file => ({
+          originalName: file.originalname,
+          fileName: file.filename,
+          filePath: file.path,
+          size: file.size
+        }));
+        responseData.message = 'Data and images updated successfully';
+      }
+
+      res.status(200).json(responseData);
+    } else {
+      res.status(404).json({ 
+        success: false, 
+        message: 'No records found to update' 
+      });
+    }
+  });
+};
+
 
 
 module.exports = {
@@ -246,5 +350,6 @@ module.exports = {
   updateStatus1,
   updateCompanyInfo,
   updatedata,
+  updatedatawithimages,
   updateSubscription
 }

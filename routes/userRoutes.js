@@ -9,6 +9,7 @@ const  savebillController = require("../controllers/billControl");
 const  deletecontroller = require("../controllers/deletecontrol");
 const  viewcontroller = require("../controllers/viewcontrol");
 const  updatecontroller = require("../controllers/updatecontrol");
+const  analyticsController = require("../controllers/analyticsController");
 const path = require('path');
 const multer = require('multer');
 
@@ -73,10 +74,17 @@ router.get('/getorderdetails/:table1/:table2',auth.isAuthorize,viewcontroller.ge
 //Update
 router.put('/updatedata1/:tablename/:col1/:val1/',auth.isAuthorize,updatecontroller.updateDataPara1);
 router.put('/updatedata/:tablename/:col1/:val1/',auth.isAuthorize,updatecontroller.updatedata);
+router.put('/updatedatawithimages/:tablename/:col1/:val1', upload.array('images', 10), auth.isAuthorize, updatecontroller.updatedatawithimages);
 router.put('/updatesubscription/:tablename/:id',auth.isAuthorize,updatecontroller.updateSubscription);
 
 //delete data 
 router.delete('/deletebyid/:tablename/:colname/:colval',auth.isAuthorize,deletecontroller.deletedatabyid);
+
+// Analytics API routes - Private API for user activity tracking
+router.post('/analytics/activity', auth.isAuthorize, analyticsController.storeUserActivity);
+router.post('/analytics/batch-activities', auth.isAuthorize, analyticsController.storeBatchActivities);
+router.get('/analytics/user-activities', auth.isAuthorize, analyticsController.getUserActivityAnalytics);
+router.get('/analytics/activity-summary', auth.isAuthorize, analyticsController.getActivitySummary);
 
 
 module.exports=router
