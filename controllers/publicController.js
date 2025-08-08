@@ -63,9 +63,33 @@ const publicFetchData = (req, res) => {
     whereClause = `WHERE (status = 'active' OR status = 'published')`;
   }
 
+  // Handle ORDER BY clause properly
+  let orderByClause = '';
+  if (orderby) {
+    // Check if orderby contains direction (ASC/DESC)
+    const orderParts = orderby.trim().split(' ');
+    if (orderParts.length === 2 && (orderParts[1].toUpperCase() === 'ASC' || orderParts[1].toUpperCase() === 'DESC')) {
+      // Field with direction: e.g., "created_at DESC"
+      orderByClause = `ORDER BY ?? ${orderParts[1].toUpperCase()}`;
+    } else {
+      // Just field name: e.g., "created_at"
+      orderByClause = `ORDER BY ??`;
+    }
+  } else {
+    orderByClause = `ORDER BY ??`;
+  }
+
   // Construct the SQL query
-  let query = `SELECT * FROM ?? ${whereClause} ORDER BY ??`;
-  const queryParams = [tablename, orderby];
+  let query = `SELECT * FROM ?? ${whereClause} ${orderByClause}`;
+  let queryParams;
+  
+  if (orderby && orderby.includes(' ')) {
+    // Extract just the field name for parameterization
+    const fieldName = orderby.trim().split(' ')[0];
+    queryParams = [tablename, fieldName];
+  } else {
+    queryParams = [tablename, orderby || 'id'];
+  }
 
   const formattedQuery = db.format(query, queryParams);
   console.log('[publicFetchData] SQL:', formattedQuery);
@@ -215,8 +239,22 @@ const publicSearch = (req, res) => {
     queryParams.push(searchField, `%${searchTerm}%`);
   }
 
-  query += ` ORDER BY ??`;
-  queryParams.push(orderby);
+  // Handle ORDER BY clause properly
+  if (orderby) {
+    const orderParts = orderby.trim().split(' ');
+    if (orderParts.length === 2 && (orderParts[1].toUpperCase() === 'ASC' || orderParts[1].toUpperCase() === 'DESC')) {
+      // Field with direction: e.g., "created_at DESC"
+      query += ` ORDER BY ?? ${orderParts[1].toUpperCase()}`;
+      queryParams.push(orderParts[0]);
+    } else {
+      // Just field name: e.g., "created_at"
+      query += ` ORDER BY ??`;
+      queryParams.push(orderby);
+    }
+  } else {
+    query += ` ORDER BY ??`;
+    queryParams.push('id');
+  }
 
   const formattedQuery = db.format(query, queryParams);
   console.log('[publicSearch] SQL:', formattedQuery);
@@ -273,7 +311,7 @@ const publicFeatured = (req, res) => {
   }
 
   // Query for featured/highlighted content
-  const query = `SELECT * FROM ?? WHERE (status = 'active' OR status = 'published') AND (featured = 1 OR is_featured = 1 OR highlight = 1) ORDER BY created_at DESC LIMIT ?`;
+  const query = `SELECT * FROM ?? WHERE status = 'active' AND is_featured = 1 ORDER BY id DESC LIMIT ?`;
   const queryParams = [tablename, parseInt(limit)];
 
   const formattedQuery = db.format(query, queryParams);
@@ -428,10 +466,492 @@ const postReviewWithImages = (req, res) => {
   });
 };
 
+// Public user registration function - no authentication required
+const publicRegisterUser = async (req, res) => {
+  const bcrypt = require('bcryptjs');
+  
+  try {
+    console.log('[publicRegisterUser] Registration attempt:', req.body);
+    
+    const { email, password, first_name, last_name, phone, date_of_birth } = req.body;
+
+    // Validate required fields
+    if (!email || !password || !first_name || !last_name) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Missing required fields: email, password, first_name, last_name',
+        data: null
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid email format',
+        data: null
+      });
+    }
+
+    // Validate password length
+    if (password.length < 6) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Password must be at least 6 characters long',
+        data: null
+      });
+    }
+
+    // Check if user already exists
+    const checkQuery = 'SELECT id FROM public_users WHERE email = ?';
+    db.query(checkQuery, [email], async (err, existingUser) => {
+      if (err) {
+        console.error('[publicRegisterUser] Database error checking existing user:', err);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Database error occurred',
+          data: null
+        });
+      }
+
+      if (existingUser && existingUser.length > 0) {
+        return res.status(409).json({
+          status: 'error',
+          message: 'User with this email already exists',
+          data: null
+        });
+      }
+
+      try {
+        // Hash password
+        const saltRounds = 12;
+        const password_hash = await bcrypt.hash(password, saltRounds);
+
+        // Handle profile picture if uploaded
+        let profile_picture_url = null;
+        if (req.file) {
+          const timestamp = Date.now();
+          const fileExtension = require('path').extname(req.file.originalname);
+          const fileName = `profile-${timestamp}${fileExtension}`;
+          const filePath = require('path').join(__dirname, '../uploads', fileName);
+          
+          // Save uploaded file
+          require('fs').writeFileSync(filePath, req.file.buffer);
+          profile_picture_url = `/uploads/${fileName}`;
+          console.log('[publicRegisterUser] Profile picture saved:', profile_picture_url);
+        }
+
+        // Insert user into public_users table
+        const insertUserQuery = `
+          INSERT INTO public_users 
+          (email, password_hash, first_name, last_name, phone, date_of_birth, profile_picture_url, created_at, updated_at) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+        `;
+
+        db.query(insertUserQuery, [
+          email, 
+          password_hash, 
+          first_name, 
+          last_name, 
+          phone || null, 
+          date_of_birth || null, 
+          profile_picture_url
+        ], (insertErr, result) => {
+          if (insertErr) {
+            console.error('[publicRegisterUser] Error inserting user:', insertErr);
+            return res.status(500).json({
+              status: 'error',
+              message: 'Failed to create user account',
+              data: null
+            });
+          }
+
+          const userId = result.insertId;
+          console.log('[publicRegisterUser] User created with ID:', userId);
+
+          // Insert default user preferences
+          const insertPreferencesQuery = `
+            INSERT INTO user_preferences 
+            (user_id, language, currency, timezone, newsletter_subscription, marketing_emails, sms_notifications, created_at, updated_at) 
+            VALUES (?, 'EN', 'USD', 'UTC', 1, 1, 0, NOW(), NOW())
+          `;
+
+          db.query(insertPreferencesQuery, [userId], (prefErr, prefResult) => {
+            if (prefErr) {
+              console.error('[publicRegisterUser] Error creating user preferences:', prefErr);
+              // Don't fail the registration if preferences creation fails
+            } else {
+              console.log('[publicRegisterUser] User preferences created for user:', userId);
+            }
+
+            // Return success response
+            res.status(201).json({
+              status: 'success',
+              message: 'User registered successfully',
+              data: {
+                user_id: userId,
+                email: email,
+                first_name: first_name,
+                last_name: last_name,
+                phone: phone,
+                profile_picture_url: profile_picture_url,
+                email_verified: false,
+                is_active: true,
+                created_at: new Date().toISOString()
+              }
+            });
+          });
+        });
+
+      } catch (hashError) {
+        console.error('[publicRegisterUser] Error hashing password:', hashError);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Failed to process password',
+          data: null
+        });
+      }
+    });
+
+  } catch (error) {
+    console.error('[publicRegisterUser] Unexpected error:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'An unexpected error occurred during registration',
+      data: null
+    });
+  }
+};
+
+// Public password reset request function
+const publicRequestPasswordReset = (req, res) => {
+  const crypto = require('crypto');
+  
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Email is required',
+        data: null
+      });
+    }
+
+    // Check if user exists
+    const checkUserQuery = 'SELECT id FROM public_users WHERE email = ? AND is_active = 1';
+    db.query(checkUserQuery, [email], (err, user) => {
+      if (err) {
+        console.error('[publicRequestPasswordReset] Database error:', err);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Database error occurred',
+          data: null
+        });
+      }
+
+      if (!user || user.length === 0) {
+        // Don't reveal if user exists or not for security
+        return res.status(200).json({
+          status: 'success',
+          message: 'If the email exists, a password reset link has been sent',
+          data: null
+        });
+      }
+
+      const userId = user[0].id;
+      
+      // Generate reset token
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 3600000); // 1 hour from now
+
+      // Insert password reset token
+      const insertTokenQuery = `
+        INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at) 
+        VALUES (?, ?, ?, NOW())
+      `;
+
+      db.query(insertTokenQuery, [userId, token, expiresAt], (tokenErr, result) => {
+        if (tokenErr) {
+          console.error('[publicRequestPasswordReset] Error creating reset token:', tokenErr);
+          return res.status(500).json({
+            status: 'error',
+            message: 'Failed to create password reset request',
+            data: null
+          });
+        }
+
+        console.log('[publicRequestPasswordReset] Password reset token created for user:', userId);
+        
+        // In a real application, you would send an email here
+        // For now, we'll just return the token (remove this in production)
+        res.status(200).json({
+          status: 'success',
+          message: 'Password reset instructions have been sent to your email',
+          data: {
+            reset_token: token, // Remove this in production
+            expires_at: expiresAt
+          }
+        });
+      });
+    });
+
+  } catch (error) {
+    console.error('[publicRequestPasswordReset] Unexpected error:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'An unexpected error occurred',
+      data: null
+    });
+  }
+};
+
+// Public password reset function
+const publicResetPassword = (req, res) => {
+  const bcrypt = require('bcryptjs');
+  
+  try {
+    const { token, new_password } = req.body;
+
+    if (!token || !new_password) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Reset token and new password are required',
+        data: null
+      });
+    }
+
+    if (new_password.length < 6) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Password must be at least 6 characters long',
+        data: null
+      });
+    }
+
+    // Check if token is valid and not expired
+    const checkTokenQuery = `
+      SELECT user_id FROM password_reset_tokens 
+      WHERE token = ? AND expires_at > NOW() AND used_at IS NULL
+    `;
+
+    db.query(checkTokenQuery, [token], async (err, tokenResult) => {
+      if (err) {
+        console.error('[publicResetPassword] Database error:', err);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Database error occurred',
+          data: null
+        });
+      }
+
+      if (!tokenResult || tokenResult.length === 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Invalid or expired reset token',
+          data: null
+        });
+      }
+
+      const userId = tokenResult[0].user_id;
+
+      try {
+        // Hash new password
+        const saltRounds = 12;
+        const password_hash = await bcrypt.hash(new_password, saltRounds);
+
+        // Update user password
+        const updatePasswordQuery = `
+          UPDATE public_users 
+          SET password_hash = ?, updated_at = NOW() 
+          WHERE id = ?
+        `;
+
+        db.query(updatePasswordQuery, [password_hash, userId], (updateErr, updateResult) => {
+          if (updateErr) {
+            console.error('[publicResetPassword] Error updating password:', updateErr);
+            return res.status(500).json({
+              status: 'error',
+              message: 'Failed to update password',
+              data: null
+            });
+          }
+
+          // Mark token as used
+          const markTokenUsedQuery = `
+            UPDATE password_reset_tokens 
+            SET used_at = NOW() 
+            WHERE token = ?
+          `;
+
+          db.query(markTokenUsedQuery, [token], (markErr, markResult) => {
+            if (markErr) {
+              console.error('[publicResetPassword] Error marking token as used:', markErr);
+            }
+
+            console.log('[publicResetPassword] Password reset successful for user:', userId);
+            
+            res.status(200).json({
+              status: 'success',
+              message: 'Password has been reset successfully',
+              data: null
+            });
+          });
+        });
+
+      } catch (hashError) {
+        console.error('[publicResetPassword] Error hashing password:', hashError);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Failed to process password',
+          data: null
+        });
+      }
+    });
+
+  } catch (error) {
+    console.error('[publicResetPassword] Unexpected error:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'An unexpected error occurred',
+      data: null
+    });
+  }
+};
+
+// Public count records function - no authentication required
+const publicCountRecords = (req, res) => {
+  const tablename = req.params.tablename;
+  const where = req.params.where ? decodeURIComponent(req.params.where) : '';
+
+  // Debug: log incoming parameters
+  console.log('[publicCountRecords] tablename:', tablename);
+  console.log('[publicCountRecords] where:', where);
+
+  // Validate inputs
+  if (!tablename) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Table name is required',
+      data: null
+    });
+  }
+
+  // Security: Only allow specific tables for public access
+  const allowedTables = [
+    'activities', 
+    'categories',
+    'packages', 
+    'destinations', 
+    'cms_activities',
+    'cms_packages',
+    'cms_destinations',
+    'cms_content',
+    'testimonials',
+    'galleries',
+    'activity_reviews',
+    'public_users'
+  ];
+
+  if (!allowedTables.includes(tablename)) {
+    return res.status(403).json({
+      status: 'error',
+      message: 'Access to this table is not allowed',
+      data: null
+    });
+  }
+
+  // Build WHERE clause
+  let whereClause = '';
+  if (where) {
+    // Parse URL parameters for WHERE conditions
+    const params = new URLSearchParams(where);
+    const conditions = [];
+    
+    for (const [key, value] of params) {
+      // Escape single quotes to prevent SQL injection
+      const escapedValue = value.replace(/'/g, "''");
+      
+      // Handle different comparison operators
+      if (value.includes('>=')) {
+        const [, compValue] = value.split('>=');
+        conditions.push(`${key} >= '${compValue.replace(/'/g, "''")}'`);
+      } else if (value.includes('<=')) {
+        const [, compValue] = value.split('<=');
+        conditions.push(`${key} <= '${compValue.replace(/'/g, "''")}'`);
+      } else if (value.includes('>')) {
+        const [, compValue] = value.split('>');
+        conditions.push(`${key} > '${compValue.replace(/'/g, "''")}'`);
+      } else if (value.includes('<')) {
+        const [, compValue] = value.split('<');
+        conditions.push(`${key} < '${compValue.replace(/'/g, "''")}'`);
+      } else if (value.includes('!=')) {
+        const [, compValue] = value.split('!=');
+        conditions.push(`${key} != '${compValue.replace(/'/g, "''")}'`);
+      } else if (value.includes('LIKE')) {
+        const [, compValue] = value.split('LIKE');
+        conditions.push(`${key} LIKE '%${compValue.replace(/'/g, "''")}%'`);
+      } else if (value.includes('IN')) {
+        // Handle IN clause: status=IN(active,inactive)
+        const inValues = value.match(/IN\(([^)]+)\)/);
+        if (inValues) {
+          const values = inValues[1].split(',').map(v => `'${v.trim().replace(/'/g, "''")}'`).join(',');
+          conditions.push(`${key} IN (${values})`);
+        }
+      } else {
+        // Default equality comparison
+        conditions.push(`${key} = '${escapedValue}'`);
+      }
+    }
+    
+    if (conditions.length > 0) {
+      whereClause = ` WHERE ${conditions.join(' AND ')}`;
+    }
+  }
+
+  // Build count query
+  const countQuery = `SELECT COUNT(*) as total_count FROM ${tablename}${whereClause}`;
+  
+  console.log('[publicCountRecords] SQL Query:', countQuery);
+
+  // Execute query
+  db.query(countQuery, (err, result) => {
+    if (err) {
+      console.error('[publicCountRecords] Database error:', err);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Database error occurred',
+        data: null,
+        error: err.message
+      });
+    }
+
+    const totalCount = result[0]?.total_count || 0;
+
+    console.log('[publicCountRecords] Count result:', totalCount);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Record count retrieved successfully',
+      data: {
+        table: tablename,
+        where_clause: where || 'none',
+        total_count: totalCount,
+        query_time: new Date().toISOString()
+      }
+    });
+  });
+};
+
 module.exports = {
   publicFetchData,
   publicFetchById,
   publicSearch,
   publicFeatured,
-  postReviewWithImages
+  postReviewWithImages,
+  publicRegisterUser,
+  publicRequestPasswordReset,
+  publicResetPassword,
+  publicCountRecords
 };
