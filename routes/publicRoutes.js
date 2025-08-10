@@ -15,6 +15,27 @@ const storage = multer.diskStorage({
   }
 });
 
+// Configure Multer storage specifically for profile pictures
+const profileStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Create profile_photo directory if it doesn't exist
+    const profilePhotoDir = path.join(__dirname, '../uploads/profile_photo');
+    if (!fs.existsSync(profilePhotoDir)) {
+      fs.mkdirSync(profilePhotoDir, { recursive: true });
+    }
+    
+    cb(null, 'uploads/profile_photo/');
+  },
+  filename: function (req, file, cb) {
+    const timestamp = Date.now();
+    const fileExtension = require('path').extname(file.originalname);
+    cb(null, `profile-${timestamp}${fileExtension}`);
+  }
+});
+
 const upload = multer({ 
   storage: storage,
   limits: {
@@ -27,6 +48,22 @@ const upload = multer({
       cb(null, true);
     } else {
       cb(new Error('Only image files are allowed!'), false);
+    }
+  }
+});
+
+const profileUpload = multer({ 
+  storage: profileStorage,
+  limits: {
+    fileSize: 2 * 1024 * 1024, // 2MB for profile pictures
+    files: 1 // Only one profile picture
+  },
+  fileFilter: (req, file, cb) => {
+    // Allow only image files
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed for profile pictures!'), false);
     }
   }
 });
@@ -96,6 +133,13 @@ router.get('/featured/:tablename', publicController.publicFeatured);
 // Usage: /public/count/activities/status=IN(active,featured) (with IN clause)
 router.get('/count/:tablename/:where?', publicController.publicCountRecords);
 
+// Get cities with activities (joined data from destinations and cms_activities)
+// Usage: /public/cities-with-activities (get all cities with activities)
+// Usage: /public/cities-with-activities?limit=10 (limit results)
+// Usage: /public/cities-with-activities?orderby=activity_count DESC (custom ordering)
+// Usage: /public/cities-with-activities?orderby=destination_name ASC&limit=5
+router.get('/cities-with-activities', publicController.publicGetCitiesWithActivities);
+
 // Post review with multiple images (no authentication required)
 // Usage: POST /public/reviews/submit
 // Form data: user_name, email, rating, review_text, entity_type, entity_id, images[]
@@ -106,7 +150,12 @@ router.post('/reviews/submit', upload.array('images', 5), handleMulterError, pub
 // User Registration with optional profile picture
 // Usage: POST /public/auth/register
 // Form data: email, password, first_name, last_name, phone (optional), date_of_birth (optional), profile_picture (optional)
-router.post('/auth/register', upload.single('profile_picture'), handleMulterError, publicController.publicRegisterUser);
+router.post('/auth/register', profileUpload.single('profile_picture'), handleMulterError, publicController.publicRegisterUser);
+
+// User Login
+// Usage: POST /public/auth/login
+// JSON body: { email, password }
+router.post('/auth/login', publicController.publicLoginUser);
 
 // Password Reset Request
 // Usage: POST /public/auth/password-reset-request
@@ -139,8 +188,10 @@ router.get('/info', (req, res) => {
       search: '/public/search/:tablename?q=searchterm&field=fieldname&orderby=orderfield',
       featured: '/public/featured/:tablename?limit=number',
       count: '/public/count/:tablename/:where? (supports operators: =, !=, >, <, >=, <=, LIKE, IN)',
+      citiesWithActivities: '/public/cities-with-activities?limit=number&orderby=field',
       reviews: 'POST /public/reviews/submit (multipart/form-data)',
       register: 'POST /public/auth/register (multipart/form-data)',
+      login: 'POST /public/auth/login (JSON)',
       passwordResetRequest: 'POST /public/auth/password-reset-request (JSON)',
       passwordReset: 'POST /public/auth/password-reset (JSON)',
       health: '/public/health',
@@ -188,6 +239,60 @@ router.get('/info', (req, res) => {
         }
       }
     },
+    citiesEndpoint: {
+      endpoint: '/public/cities-with-activities',
+      method: 'GET',
+      description: 'Get cities/destinations with their activities count and statistics',
+      query_parameters: {
+        limit: 'number (optional) - Limit the number of results',
+        orderby: 'string (optional) - Order by field with optional direction'
+      },
+      supported_order_fields: [
+        'destination_name', 'city', 'state', 'country', 'activity_count', 
+        'destination_type', 'best_time_to_visit'
+      ],
+      examples: {
+        all_cities: '/public/cities-with-activities',
+        limited_results: '/public/cities-with-activities?limit=10',
+        ordered_by_activities: '/public/cities-with-activities?orderby=activity_count DESC',
+        ordered_by_name: '/public/cities-with-activities?orderby=destination_name ASC&limit=5',
+        ordered_by_type: '/public/cities-with-activities?orderby=destination_type ASC',
+        ordered_by_state: '/public/cities-with-activities?orderby=state ASC'
+      },
+      response_format: {
+        status: 'success',
+        message: 'Cities with activities retrieved successfully',
+        data: [
+          {
+            destination_id: 'number',
+            destination_name: 'string',
+            city: 'string',
+            state: 'string',
+            country: 'string',
+            destination_type: 'string',
+            full_location: 'string',
+            destination_description: 'string',
+            destination_images: 'array or null',
+            best_time_to_visit: 'string',
+            popular_attractions: 'array or null',
+            climate: 'string',
+            is_featured: 'boolean',
+            activity_statistics: {
+              total_activities: 'number',
+              categories: ['array of unique category names']
+            },
+            sample_activities: ['array of activity names'],
+            query_time: 'ISO timestamp'
+          }
+        ],
+        count: 'number',
+        summary: {
+          total_destinations: 'number',
+          total_activities: 'number',
+          query_params: { limit: 'number', order_by: 'string' }
+        }
+      }
+    },
     authEndpoints: {
       registration: {
         endpoint: '/public/auth/register',
@@ -198,6 +303,21 @@ router.get('/info', (req, res) => {
           optional: ['phone', 'date_of_birth', 'profile_picture']
         },
         description: 'Register a new public user account with optional profile picture'
+      },
+      login: {
+        endpoint: '/public/auth/login',
+        method: 'POST',
+        contentType: 'application/json',
+        fields: {
+          required: ['email', 'password']
+        },
+        description: 'Login with email and password to get JWT token',
+        response: {
+          user: 'object with user details',
+          preferences: 'object with user preferences',
+          token: 'JWT token for authentication',
+          expires_at: 'token expiration timestamp'
+        }
       },
       passwordReset: {
         request: {

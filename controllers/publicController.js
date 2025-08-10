@@ -459,7 +459,14 @@ const postReviewWithImages = (req, res) => {
         customer_name: customer_name,
         rating: parseInt(rating),
         images_uploaded: req.files ? req.files.length : 0,
-        review_images: reviewImages ? JSON.parse(reviewImages) : null,
+        review_images: reviewImages ? (() => {
+          try {
+            return JSON.parse(reviewImages);
+          } catch (e) {
+            console.warn('[postReviewWithImages] Error parsing review_images JSON:', e);
+            return null;
+          }
+        })() : null,
         status: 'pending'
       }
     });
@@ -531,14 +538,8 @@ const publicRegisterUser = async (req, res) => {
         // Handle profile picture if uploaded
         let profile_picture_url = null;
         if (req.file) {
-          const timestamp = Date.now();
-          const fileExtension = require('path').extname(req.file.originalname);
-          const fileName = `profile-${timestamp}${fileExtension}`;
-          const filePath = require('path').join(__dirname, '../uploads', fileName);
-          
-          // Save uploaded file
-          require('fs').writeFileSync(filePath, req.file.buffer);
-          profile_picture_url = `/uploads/${fileName}`;
+          // File is already saved by multer in the profile_photo directory
+          profile_picture_url = `/uploads/profile_photo/${req.file.filename}`;
           console.log('[publicRegisterUser] Profile picture saved:', profile_picture_url);
         }
 
@@ -944,6 +945,291 @@ const publicCountRecords = (req, res) => {
   });
 };
 
+// Public get cities with activities function - no authentication required
+const publicGetCitiesWithActivities = (req, res) => {
+  const limit = req.query.limit ? parseInt(req.query.limit) : null;
+  const orderBy = req.query.orderby || 'activity_count DESC';
+  
+  console.log('[publicGetCitiesWithActivities] limit:', limit);
+  console.log('[publicGetCitiesWithActivities] orderBy:', orderBy);
+
+  // Build the query to get cities grouped by location_id with activity counts
+  let query = `
+    SELECT 
+      d.id as destination_id,
+      d.name as destination_name,
+      d.name as city,
+      d.state,
+      d.country,
+      d.type as destination_type,
+      d.description as destination_description,
+      d.images as destination_images,
+      d.best_time_to_visit,
+      d.popular_attractions,
+      d.climate,
+      d.is_featured as destination_featured,
+      COUNT(ca.id) as activity_count,
+      GROUP_CONCAT(DISTINCT ca.name ORDER BY ca.name SEPARATOR ', ') as sample_activities,
+      GROUP_CONCAT(DISTINCT ca.category ORDER BY ca.category SEPARATOR ', ') as activity_categories
+    FROM destinations d
+    LEFT JOIN cms_activities ca ON d.id = ca.location_id 
+      AND (ca.status = 'active' OR ca.status = 'published')
+    WHERE (d.status = 'Active' OR d.status = 'active')
+    GROUP BY d.id, d.name, d.state, d.country, d.type, d.description, d.images, d.best_time_to_visit, d.popular_attractions, d.climate, d.is_featured
+    HAVING activity_count > 0
+  `;
+
+  // Handle ORDER BY clause properly
+  if (orderBy) {
+    const orderParts = orderBy.trim().split(' ');
+    const allowedOrderFields = [
+      'destination_name', 'city', 'state', 'country', 'activity_count', 
+      'destination_type', 'best_time_to_visit'
+    ];
+    
+    if (allowedOrderFields.includes(orderParts[0])) {
+      if (orderParts.length === 2 && (orderParts[1].toUpperCase() === 'ASC' || orderParts[1].toUpperCase() === 'DESC')) {
+        query += ` ORDER BY ${orderParts[0]} ${orderParts[1].toUpperCase()}`;
+      } else {
+        query += ` ORDER BY ${orderParts[0]}`;
+      }
+    } else {
+      // Default ordering
+      query += ` ORDER BY activity_count DESC`;
+    }
+  }
+
+  // Add limit if specified
+  if (limit && limit > 0) {
+    query += ` LIMIT ${parseInt(limit)}`;
+  }
+
+  console.log('[publicGetCitiesWithActivities] SQL Query:', query);
+
+  // Execute query
+  db.query(query, (err, result) => {
+    if (err) {
+      console.error('[publicGetCitiesWithActivities] Database error:', err);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Database error occurred',
+        data: null,
+        error: err.message
+      });
+    }
+
+    // Helper function to safely parse JSON or return fallback
+    const safeJsonParse = (jsonString, fallback = null) => {
+      if (!jsonString) return fallback;
+      
+      try {
+        // Check if it's already a valid JSON string
+        return JSON.parse(jsonString);
+      } catch (e) {
+        console.warn('[publicGetCitiesWithActivities] Invalid JSON, using fallback:', jsonString);
+        
+        // If it's a simple string, return it as is
+        if (typeof jsonString === 'string') {
+          // If it looks like a comma-separated list, split it
+          if (jsonString.includes(',')) {
+            return jsonString.split(',').map(item => item.trim());
+          }
+          // Otherwise return as single item array or plain string
+          return fallback === null ? jsonString : [jsonString];
+        }
+        
+        return fallback;
+      }
+    };
+
+    // Process the results to format data and add additional info
+    const processedResults = result.map(row => ({
+      destination_id: row.destination_id,
+      destination_name: row.destination_name,
+      city: row.city,
+      state: row.state,
+      country: row.country,
+      destination_type: row.destination_type,
+      full_location: `${row.city}${row.state ? ', ' + row.state : ''}${row.country ? ', ' + row.country : ''}`,
+      destination_description: row.destination_description,
+      destination_images: safeJsonParse(row.destination_images, []),
+      best_time_to_visit: row.best_time_to_visit,
+      popular_attractions: safeJsonParse(row.popular_attractions, []),
+      climate: row.climate,
+      is_featured: Boolean(row.destination_featured),
+      activity_statistics: {
+        total_activities: row.activity_count,
+        categories: row.activity_categories ? row.activity_categories.split(', ').filter((item, index, arr) => arr.indexOf(item) === index) : []
+      },
+      sample_activities: row.sample_activities ? row.sample_activities.split(', ').slice(0, 5) : [],
+      query_time: new Date().toISOString()
+    }));
+
+    console.log('[publicGetCitiesWithActivities] Results count:', processedResults.length);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Cities with activities retrieved successfully',
+      data: processedResults,
+      count: processedResults.length,
+      summary: {
+        total_destinations: processedResults.length,
+        total_activities: processedResults.reduce((sum, city) => sum + city.activity_statistics.total_activities, 0),
+        query_params: {
+          limit: limit,
+          order_by: orderBy
+        }
+      }
+    });
+  });
+};
+
+// Public user login function - no authentication required
+const publicLoginUser = async (req, res) => {
+  const bcrypt = require('bcryptjs');
+  const jwt = require('jsonwebtoken');
+  
+  try {
+    console.log('[publicLoginUser] Login attempt:', { email: req.body.email });
+    
+    const { email, password } = req.body;
+
+    // Validate required fields
+    if (!email || !password) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Email and password are required',
+        data: null
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid email format',
+        data: null
+      });
+    }
+
+    // Find user by email
+    const userQuery = `
+      SELECT 
+        id, email, password_hash, first_name, last_name, phone, 
+        date_of_birth, profile_picture_url, email_verified, is_active, 
+        created_at, updated_at, last_login
+      FROM public_users 
+      WHERE email = ? AND is_active = 1
+    `;
+
+    db.query(userQuery, [email], async (err, userResult) => {
+      if (err) {
+        console.error('[publicLoginUser] Database error:', err);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Database error occurred',
+          data: null
+        });
+      }
+
+      if (!userResult || userResult.length === 0) {
+        return res.status(401).json({
+          status: 'error',
+          message: 'Invalid email or password',
+          data: null
+        });
+      }
+
+      const user = userResult[0];
+
+      try {
+        // Verify password
+        const passwordMatch = await bcrypt.compare(password, user.password_hash);
+        
+        if (!passwordMatch) {
+          return res.status(401).json({
+            status: 'error',
+            message: 'Invalid email or password',
+            data: null
+          });
+        }
+
+        // Update last login time
+        const updateLoginQuery = 'UPDATE public_users SET last_login = NOW() WHERE id = ?';
+        db.query(updateLoginQuery, [user.id], (updateErr) => {
+          if (updateErr) {
+            console.error('[publicLoginUser] Error updating last login:', updateErr);
+          }
+        });
+
+        // Generate JWT token (you can adjust the secret and expiration)
+        const tokenPayload = {
+          user_id: user.id,
+          email: user.email,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          type: 'public_user'
+        };
+
+        const jwtSecret = process.env.JWT_SECRET || 'your-secret-key-here';
+        const token = jwt.sign(tokenPayload, jwtSecret, { expiresIn: '24h' });
+
+        // Get user preferences
+        const preferencesQuery = 'SELECT * FROM user_preferences WHERE user_id = ?';
+        db.query(preferencesQuery, [user.id], (prefErr, prefResult) => {
+          let userPreferences = null;
+          if (!prefErr && prefResult && prefResult.length > 0) {
+            userPreferences = prefResult[0];
+          }
+
+          console.log('[publicLoginUser] Login successful for user:', user.id);
+
+          // Return success response with user data and token
+          res.status(200).json({
+            status: 'success',
+            message: 'Login successful',
+            data: {
+              user: {
+                id: user.id,
+                email: user.email,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                phone: user.phone,
+                date_of_birth: user.date_of_birth,
+                profile_picture_url: user.profile_picture_url,
+                email_verified: Boolean(user.email_verified),
+                is_active: Boolean(user.is_active),
+                created_at: user.created_at,
+                last_login: new Date().toISOString()
+              },
+              preferences: userPreferences,
+              token: token,
+              expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
+            }
+          });
+        });
+
+      } catch (compareError) {
+        console.error('[publicLoginUser] Error comparing password:', compareError);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Authentication error occurred',
+          data: null
+        });
+      }
+    });
+
+  } catch (error) {
+    console.error('[publicLoginUser] Unexpected error:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'An unexpected error occurred during login',
+      data: null
+    });
+  }
+};
+
 module.exports = {
   publicFetchData,
   publicFetchById,
@@ -953,5 +1239,7 @@ module.exports = {
   publicRegisterUser,
   publicRequestPasswordReset,
   publicResetPassword,
-  publicCountRecords
+  publicCountRecords,
+  publicGetCitiesWithActivities,
+  publicLoginUser
 };
